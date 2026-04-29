@@ -28,7 +28,7 @@ def test_odoo():
 
 @app.post("/create-order")
 async def create_order(data: dict = Body(...)):
-    
+
     billing = data.get("billing", {})
 
     customer_name = f"{billing.get('first_name', '')} {billing.get('last_name', '')}"
@@ -36,10 +36,14 @@ async def create_order(data: dict = Body(...)):
     email = billing.get("email", "")
     order_number = str(data.get("id"))
 
+    # Conexión Odoo
     common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
     uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASSWORD, {})
     models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
+    # =========================
+    # 1. BUSCAR O CREAR CLIENTE
+    # =========================
     partner_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASSWORD,
         'res.partner', 'search',
@@ -59,13 +63,41 @@ async def create_order(data: dict = Body(...)):
             }]
         )
 
+    # =========================
+    # 2. BUSCAR WEBSITE "TARGO"
+    # =========================
+    website_ids = models.execute_kw(
+        ODOO_DB, uid, ODOO_PASSWORD,
+        'website', 'search',
+        [[['name', 'ilike', 'Targo']]],
+        {'limit': 1}
+    )
+
+    website_id = website_ids[0] if website_ids else False
+
+    # =========================
+    # 3. CREAR ORDEN
+    # =========================
+    order_vals = {
+        'partner_id': partner_id,
+        'client_order_ref': order_number
+    }
+
+    if website_id:
+        order_vals['website_id'] = website_id
+
     order_id = models.execute_kw(
         ODOO_DB, uid, ODOO_PASSWORD,
         'sale.order', 'create',
-        [{
-            'partner_id': partner_id,
-            'client_order_ref': order_number
-        }]
+        [order_vals]
     )
 
-    return {"ok": True, "order_id": order_id}
+    # =========================
+    # RESPUESTA
+    # =========================
+    return {
+        "ok": True,
+        "order_id": order_id,
+        "website_id": website_id,
+        "customer": customer_name
+    }
