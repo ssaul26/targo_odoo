@@ -1,6 +1,6 @@
 import os
 import xmlrpc.client
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Body
 
 app = FastAPI()
 
@@ -27,19 +27,19 @@ def test_odoo():
 
 
 @app.post("/create-order")
-async def create_order(request: Request):
-    data = await request.json()
+async def create_order(data: dict = Body(...)):
+    
+    billing = data.get("billing", {})
 
-    customer_name = data.get("customer_name")
-    phone = data.get("phone")
-    email = data.get("email")
-    order_number = data.get("order_number")
+    customer_name = f"{billing.get('first_name', '')} {billing.get('last_name', '')}"
+    phone = billing.get("phone", "")
+    email = billing.get("email", "")
+    order_number = str(data.get("id"))
 
     common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
     uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASSWORD, {})
     models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
-    # 1. Buscar cliente
     partner_ids = models.execute_kw(
         ODOO_DB, uid, ODOO_PASSWORD,
         'res.partner', 'search',
@@ -49,7 +49,6 @@ async def create_order(request: Request):
     if partner_ids:
         partner_id = partner_ids[0]
     else:
-        # 2. Crear cliente
         partner_id = models.execute_kw(
             ODOO_DB, uid, ODOO_PASSWORD,
             'res.partner', 'create',
@@ -60,7 +59,6 @@ async def create_order(request: Request):
             }]
         )
 
-    # 3. Crear orden de venta
     order_id = models.execute_kw(
         ODOO_DB, uid, ODOO_PASSWORD,
         'sale.order', 'create',
@@ -70,8 +68,4 @@ async def create_order(request: Request):
         }]
     )
 
-    return {
-        "ok": True,
-        "order_id": order_id,
-        "message": "Orden creada en Odoo"
-    }
+    return {"ok": True, "order_id": order_id}
