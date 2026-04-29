@@ -1,6 +1,8 @@
 import os
 import xmlrpc.client
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+
+app = FastAPI()
 
 app = FastAPI()
 
