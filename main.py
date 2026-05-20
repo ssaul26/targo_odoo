@@ -403,7 +403,7 @@ async def create_order(data: dict = Body(...)):
     created_lines = []
     missing_products = []
 
-    # =========================
+       # =========================
     # 4. AGREGAR PRODUCTOS
     # =========================
 
@@ -412,54 +412,100 @@ async def create_order(data: dict = Body(...)):
         product_name = item.get("name", "").strip()
         quantity = item.get("quantity", 1)
 
+        # SKU de WooCommerce. Debe coincidir con Odoo product.product.default_code
+        sku = str(item.get("sku", "")).strip()
+
         try:
             price = float(item.get("price", 0))
         except Exception:
             price = 0
 
+        # Si price viene en 0, intentamos calcularlo desde subtotal / cantidad
+        if price == 0:
+            try:
+                subtotal = float(item.get("subtotal", 0))
+                qty_float = float(quantity) if quantity else 1
+                price = subtotal / qty_float
+            except Exception:
+                price = 0
+
         size = extract_size_from_woo_item(item)
 
         print("========== PRODUCTO WOO ==========")
         print("Nombre Woo:", product_name)
+        print("SKU Woo:", sku)
         print("Cantidad:", quantity)
         print("Precio:", price)
         print("Talla Woo:", size)
         print("Meta data Woo:", item.get("meta_data", []))
 
-        base_product_name = product_name.split(" - ")[0].strip()
+        product_id = False
 
-        template_ids = models.execute_kw(
-            ODOO_DB,
-            uid,
-            ODOO_PASSWORD,
-            "product.template",
-            "search",
-            [[["name", "ilike", base_product_name]]],
-            {"limit": 1}
-        )
+        # =========================
+        # 4.1 BUSCAR PRIMERO POR SKU
+        # =========================
 
-        if not template_ids:
-            missing_products.append({
-                "product_name": product_name,
-                "reason": "No se encontró product.template"
-            })
-            continue
+        if sku:
+            product_ids = models.execute_kw(
+                ODOO_DB,
+                uid,
+                ODOO_PASSWORD,
+                "product.product",
+                "search",
+                [[["default_code", "=", sku]]],
+                {"limit": 1}
+            )
 
-        product_template_id = template_ids[0]
+            if product_ids:
+                product_id = product_ids[0]
+                print("Producto encontrado por SKU:", product_id)
 
-        product_id = find_correct_variant(
-            models,
-            uid,
-            product_template_id,
-            size
-        )
+        # =========================
+        # 4.2 RESPALDO: BUSCAR POR NOMBRE + TALLA
+        # =========================
+
+        if not product_id:
+
+            base_product_name = product_name.split(" - ")[0].strip()
+
+            template_ids = models.execute_kw(
+                ODOO_DB,
+                uid,
+                ODOO_PASSWORD,
+                "product.template",
+                "search",
+                [[["name", "ilike", base_product_name]]],
+                {"limit": 1}
+            )
+
+            if not template_ids:
+                missing_products.append({
+                    "product_name": product_name,
+                    "sku": sku,
+                    "reason": "No se encontró product.template ni default_code"
+                })
+                continue
+
+            product_template_id = template_ids[0]
+
+            product_id = find_correct_variant(
+                models,
+                uid,
+                product_template_id,
+                size
+            )
 
         if not product_id:
             missing_products.append({
                 "product_name": product_name,
+                "sku": sku,
                 "reason": "No se encontró variante product.product"
             })
             continue
+
+        # =========================
+        # 4.3 CREAR LÍNEA DE PEDIDO
+        # =========================
 
         line_id = models.execute_kw(
             ODOO_DB,
@@ -477,14 +523,15 @@ async def create_order(data: dict = Body(...)):
 
         created_lines.append({
             "product_name": product_name,
-            "base_product_name": base_product_name,
+            "base_product_name": product_name.split(" - ")[0].strip(),
+            "sku": sku,
             "size": size,
             "product_id": product_id,
             "line_id": line_id,
             "quantity": quantity,
             "price": price
         })
-
+        
     # =========================
     # 5. CONFIRMAR ORDEN EN ODOO
     # =========================
